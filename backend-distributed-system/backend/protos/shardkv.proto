@@ -32,6 +32,7 @@ message PingResponse {
  string primary = 2;
  string backup = 3;
  string shardmaster = 4;
+ 
 }
 
 message PingRequest {

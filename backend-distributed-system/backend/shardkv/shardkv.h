@@ -24,7 +24,7 @@ class ShardkvServer : public Shardkv::Service {
             [this]() {
                 // TODO: Assignment 2 Implement the QueryShardmaster(...) function
                 std::chrono::milliseconds timespan(100);
-                while (shardmaster_address.empty()) {
+                while (shardmaster_address.empty() && (this->primary_address != this->address)) {
                     std::this_thread::sleep_for(timespan);
                 }
                 auto stub = Shardmaster::NewStub(
@@ -55,6 +55,9 @@ class ShardkvServer : public Shardkv::Service {
     // we detach the thread so we don't have to wait for it to terminate later
     heartbeat.detach();
   };
+
+  // Number of times a server will try to contact others
+  int32_t MAX_TRIAL = 1000;
 
 
   // TODO implement these three methods, should be fairly similar to your simple_shardkv
@@ -89,8 +92,27 @@ class ShardkvServer : public Shardkv::Service {
   std::string shardmanager_address;
   // address of shardmaster sent by the shardmanager
   std::string shardmaster_address;
+  
+  std::map<std::string, std::string> database;
+  
+  // data structure for the keys and the server
+  std::map<int, std::string> key_server;
+  
+  // data structure for the post
+  std::map<std::string, std::string> post_usr;
+  
+  // mutex for the thread safety
+  std::mutex skv_mtx;
 
-  // TODO add any fields you want here!
+  // current view number to acknowledge
+  int64_t viewnumber;
+
+  // address of the backup server
+  std::string backup_address;
+  
+  // address of the primary server
+  std::string primary_address;
+
 };
 
 #endif  // SHARDING_SHARDKV_H

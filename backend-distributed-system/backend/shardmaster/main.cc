@@ -2,7 +2,6 @@
 #include <cstdio>
 #include "shardmaster.h"
 
-
 int main(int argc, char** argv) {
   if (argc != 2) {
     fprintf(stderr, "usage: ./shardmaster <PORT>\n");

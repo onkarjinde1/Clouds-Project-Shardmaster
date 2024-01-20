@@ -3,6 +3,7 @@
 
 #include "../common/common.h"
 
+
 #include <grpcpp/grpcpp.h>
 #include <unordered_map>
 #include <string>
@@ -29,6 +30,10 @@ class StaticShardmaster : public Shardmaster::Service {
   // Hint: think about what sort of data structures make sense for keeping track
   // of which servers have which shards, as well as what kind of locking you
   // will need to ensure thread safety.
+  std::mutex ssm_mtx; // Mutex class is a synchronization primitive that 
+                      // can be used to protect shared data from being simultaneously accessed by multiple threads.
+  std::unordered_map<std::string, std::vector<shard_t>> ssm; //Like java maps
+  std::vector<std::string> ser; 
 };
 
 #endif  // SHARDING_SHARDMASTER_H

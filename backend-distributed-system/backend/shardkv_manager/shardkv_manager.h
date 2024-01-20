@@ -31,12 +31,46 @@ class ShardkvManager : public Shardkv::Service {
   explicit ShardkvManager(std::string addr, const std::string& shardmaster_addr)
       : address(std::move(addr)), sm_address(shardmaster_addr) {
       // TODO: Part 3
-      // This thread will check for last shardkv server ping and update the view accordingly if needed
+      // This thread will query the shardmaster every 1 second for updates
       std::thread heartbeatChecker(
               [this]() {
                   std::chrono::milliseconds timespan(1000);
-                  while (true) {
+                  while (shardKV_address.empty()) {
                       std::this_thread::sleep_for(timespan);
+                  }
+
+                  while (true){
+                    std::this_thread::sleep_for(timespan);
+                    PingInterval pp = pingIntervals[this->shardKV_address];
+        
+                    if(pp.GetPingInterval() > this->deadPingInterval && this->shardKV_address != ""){
+                        
+                        this->skv_mtx.lock();
+
+                        std::cout << "SEEMS LIKE PRIMARY SERVER DIED" << std::endl;
+                        this->shardKV_address = this->shardKV_backup_address;
+                        this->shardKV_backup_address = "";
+                        this->current_view = this->last_ack_view+1;
+                        this->views[this->current_view].push_back(this->shardKV_address);
+                        this->views[this->current_view].push_back(this->shardKV_backup_address);
+
+                        this->skv_mtx.unlock();
+
+                    }
+                    /*
+                    if(bp.GetPingInterval() > this->deadPingInterval && this->shardKV_backup_address != ""){
+                        
+                        this->skv_mtx.lock();
+
+                        std::cout << "SEEMS LIKE BACKUP SERVER DIED" << std::endl;
+                        this->shardKV_backup_address = "";
+                        this->current_view = this->last_ack_view+1;
+                        this->views[this->current_view].push_back(this->shardKV_address);
+                        this->views[this->current_view].push_back(this->shardKV_backup_address);
+
+                        this->skv_mtx.unlock();
+                    }
+                    */
                   }
               });
       // We detach the thread so we don't have to wait for it to terminate later
@@ -65,6 +99,29 @@ class ShardkvManager : public Shardkv::Service {
     // shardmaster address
     std::string sm_address;
 
+    // mutex
+    std::mutex skv_mtx;
+
+    // address of the primary server
+    std::string shardKV_address;
+
+    // address of the backup server
+    std::string shardKV_backup_address;
+
+    // current view number
+    int64_t current_view = 0;
+
+    // last acknowledged view
+    int64_t last_ack_view = 0;
+
+    // the intervals of ping
+    std::map<std::string, PingInterval> pingIntervals;
+
+    // views
+    std::map<int, std::vector<std::string>> views;
+
+    // time over which consider a server dead
+    uint64_t deadPingInterval = 2000;
     // TODO add any fields you want here!
 };
 #endif  // SHARDING_SHARDKV_MANAGER_H

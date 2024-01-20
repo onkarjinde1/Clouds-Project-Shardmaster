@@ -18,18 +18,19 @@
 ::grpc::Status ShardkvServer::Get(::grpc::ServerContext* context,
                                   const ::GetRequest* request,
                                   ::GetResponse* response) {
+  
+  std::string key = request->key();
+  
+  
+  if(this->database.find(key)==this->database.end()){
+    // lock.unlock();
+    return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Key not found!");
+  }
 
-    std::string key = request->key();
-
-    if(this->database.find(key)== this ->dattabase.end()){
-
-        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Key not found");
-    }
-
-    const std::string &val = database[key];
-    response->set_data(val);
-
-    return ::grpc::Status::OK;
+  const std::string &val = database[key];
+  response->set_data(val);
+  // lock.unlock();
+  return ::grpc::Status::OK;
 }
 
 /**
@@ -50,91 +51,109 @@
                                   const ::PutRequest* request,
                                   Empty* response) {
 
-                                    std::string key_req = request->key();
-                                    std::string data_req = request->data();
-                                    std::string user_req = request->user();
-
-                                    if(this->primary_address == this->address){
-                                        if (!this->backup_address.empty()){
-
-                                            auto channel = ::grpc::CreateChannel(this->backup_address, ::grpc::InsecureChannelCredentials());
-                                            auto kvStub2 = Shardkv::NewStub(channel);
-                                            ::grpc::ClientContext cc;
-
-                                            auto status = kvStub2->Put(&cc, *request, response);
-
-                                            if (status.ok()){
-                                                std::cout << "Shardmanager got the Put response from the backup server" << std::end1;
-
-                                            }else{
-                                                return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
-                                            }
-                                        }
-                                    }
-                                    int key_id = extractID(key_req);
-
-                                    if(this->key_server.find(key_id)==this->key_server.end() || this->key_server[key_id]!=this->shardmanager_address){
-                                        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Server not responsible for the Key!");
-                                    }
-
-                                    if (this->database.find(key_req)==this->database.end()){
-                                        if(key_req.find("post", 0) != std::string::npos){
-                                            if(user_req!==" "){
-                                                int uid = extractID(user_req);
-                                                if(this->key_server[uid]==this->shardmanager_address)
-
-                                                this->database[user_req+"_posts"] += (key_req+",");
-
-                                                else{
-
-                                                    std::chrono::milliseconds timespan(100);
-                                                    auto channel = grpc::CreateChannel(key_server[uid], grpc::InsecureChaneelCredentials());
-
-                                                    std::string user_post_key = user_req + "_posts";
-
-                                                    int i = 0;
-                                                    while(i < MAX_TRIAL){
-
-                                                        ::grpc::ClientContext cc;
-                                                        AppendRequest req;
-                                                        Empty res;
-
-                                                        req.set_key(user_post_key);
-                                                        req.set_data(key_req);
-
-                                                        auto stat = stub->Append(&cc, req, &res);
-                                                        if(stat.ok())
-
-                                                            break;
-
-                                                        else{
-                                                            std::this_thread::sleep_for(timespan);
-                                                            i++;
-                                                        }
-                                                    }
-
-                                                    if (i == MAX_TRIAL){
-
-                                                        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Failed to contact the right server");
-                                                    }
-                                                }
-                                            }
-
-                                            this->post_usr[key_req] = user_req;
-
-                                        }
-
-                                        else{
-                                            this->database["all_users"] += (key_req+",");
-
-                                        }
-
-                                    }
-
-                                    this->database[key_req] = data_req;
-
-                                    return ::grpc::Status::OK;
     
+    std::string key_req = request->key();
+    std::string data_req = request->data();
+    std::string user_req = request->user();
+
+
+    if(this->primary_address == this->address){
+
+        if (!this->backup_address.empty()){
+            
+            auto channel = ::grpc::CreateChannel(this->backup_address, ::grpc::InsecureChannelCredentials());
+            auto kvStub2 = Shardkv::NewStub(channel);
+            ::grpc::ClientContext cc;
+            
+            auto status = kvStub2->Put(&cc, *request, response);
+
+            if (status.ok()){
+                std::cout << "Shardmanager got the Put response from the backup server" << std::endl;
+            }else{
+                return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+            }
+
+        }
+    }
+
+    
+    int key_id = extractID(key_req);
+
+    if(this->key_server.find(key_id)==this->key_server.end() || this->key_server[key_id]!=this->shardmanager_address){
+        // lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Server not responsible for the Key!");
+    }
+
+    
+
+    if(this->database.find(key_req)==this->database.end()){
+        
+        
+        
+        if(key_req.find("post", 0) != std::string::npos){
+            
+            if(user_req!=""){
+                
+                int uid = extractID(user_req);
+                
+                if(this->key_server[uid]==this->shardmanager_address)
+                    
+                    this->database[user_req+"_posts"] += (key_req+",");
+                
+                else{
+                    
+                    std::chrono::milliseconds timespan(100);
+                    auto channel = grpc::CreateChannel(key_server[uid], grpc::InsecureChannelCredentials());
+                    auto stub = Shardkv::NewStub(channel);
+                    
+                    std::string user_post_key = user_req + "_posts";
+
+                    
+                    
+                    int i = 0;
+                    
+                    while(i < MAX_TRIAL){
+                        
+                        ::grpc::ClientContext cc;
+                        AppendRequest req;
+                        Empty res;
+                        
+                        req.set_key(user_post_key);
+                        req.set_data(key_req);
+                        
+                        auto stat = stub->Append(&cc, req, &res);
+                        if(stat.ok())
+                        
+                            break;
+                        
+                        else{
+                        
+                            std::this_thread::sleep_for(timespan);
+                            i++;
+                        
+                        }
+                    }
+                    if (i == MAX_TRIAL){
+                        // lock.unlock();
+                        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Not possible to contact the right server!");
+                    }
+                }
+            }
+            
+            this->post_usr[key_req] = user_req;
+        }
+        else{
+
+            
+            this->database["all_users"] += (key_req+",");
+        }
+    }
+     
+    this->database[key_req] = data_req;
+
+    
+    // lock.unlock();
+    return ::grpc::Status::OK;
 }
 
 /**
@@ -153,70 +172,72 @@
 ::grpc::Status ShardkvServer::Append(::grpc::ServerContext* context,
                                      const ::AppendRequest* request,
                                      Empty* response) {
-                                        
+
+    
+    
+    
+    if(this->primary_address == this->address){
+
+        if(!this->backup_address.empty()){
+
+            auto channel = ::grpc::CreateChannel(this->backup_address, ::grpc::InsecureChannelCredentials());
+            auto kvStub = Shardkv::NewStub(channel);
+            ::grpc::ClientContext cc;
+            
+            auto status = kvStub->Append(&cc, *request, response);
+
+            if (status.ok()){
+            std::cout << "Shardmanager got the Append response from the backup server" << std::endl;
+            }else{
+
+                // lock.unlock();
+                return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+            }
+        }
+    }
+
+    std::string key = request->key();
+    std::string data = request->data();
+    
+    
+    
+    int key_id;
+    std::string user="";
+
+   
+    if(key[0] == 'p')
+        user = post_usr[key];
+    else if(key[key.length()-1] == 's'){
+        this->database[key] += (data+",");
+        // lock.unlock();
+        return ::grpc::Status::OK;
+    }
+    else
+        user = key;
+    
+    key_id = extractID(key);
+    
+    if(this->key_server.find(key_id) == this->key_server.end() || this->key_server[key_id] != this->shardmanager_address){
+        // lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Server not responsible for the Key!");
+    }
 
 
+    if(this->database.find(key) == this->database.end()){
 
-
-                                        if(this->primary_address == this->address){
-                                            if (!this->backup_address.empty()){
-
-                                                auto channel = ::grpc::CreateChannel(this->backup_address, ::grpc::InsecureChannelCredentials());
-                                                auto kvStub2 = Shardkv::NewStub(channel);
-                                                ::grpc::ClientContext cc;
-
-                                                auto status = kvStub2->Append(&cc, *request, response);
-
-                                                if (status.ok()){
-                                                    std::cout << "Shardmanager got the Append response from the backup server" << std::end1;
-
-                                                }else{
-                                                    return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
-                                                }
-                                            }
-
-
-
-                                        }
-                                        std::string key = request->key();
-                                        std::string data = request->data();
-
-                                        int key_id;
-                                        std::strirng user="";
-
-                                        if (key[0] == 'p')
-                                            user = post_usr[key];
-                                        else if(key[key.length()-1] == 's'){
-                                            this->database[key] += (data+",");
-
-                                            return ::grpc::Status::OK;
-
-                                        }
-                                        else
-                                            user = key;
-
-                                        key_id = extractID(key);
-
-                                        if(this->key_server.find(key_id) == this->key_server.end() || this->key_server[key_id] != this->shardmanager_address){
-                                            return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Server not responsible for the Key!");
-
-                                        }
-
-                                        if(this->databasefind.find(key) == this->database.end()){
-                                            if(key[0] == 'p'){
-                                                if(user != "")
-                                                this->database[user+"_posts"] += (key+",")
-
-                                            }
-                                            else
-                                                this->database["all_users"] += (key+",");
-                                                this->database[key] += data;
-                                        }
-                                        else
-                                            this->database[key] += data;
-
-                                            return ::grpc::Status::OK;
-
+        if(key[0] == 'p'){
+            if(user != "")
+                this->database[user+"_posts"] += (key+",");
+        }
+        else
+            this->database["all_users"] += (key+",");
+        this->database[key] = data;
+    }
+    else
+        this->database[key] += data;
+    
+    // lock.unlock();
+    return ::grpc::Status::OK;
 }
 
 /**
@@ -234,47 +255,47 @@
 ::grpc::Status ShardkvServer::Delete(::grpc::ServerContext* context,
                                            const ::DeleteRequest* request,
                                            Empty* response) {
-                                                  std::string key = request->key();
+    std::string key = request->key();
     
-                                                  if(this->database.find(key) == this->database.end())
-                                                        this->database.erase(key);
-                                                        else{
-                                                    return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Key not found");
-                                                  }
-                                                  if(key[0] == 'p'){
-                                                    if(post_usr[key]!=""){
-                                                        int uid = extractID(post_usr[key]);
-                                                        if(key_server[uid] == this-> shardmanager_address){
-                                                            std::string userp = post_usr[key] + "_posts";
-                                                            std::string lis = database[userp];
-                                                            std::vector<std::string> str_v = parse_value(lis, ",");
-                                                            str_v.earse(find(str_v.begin(), str_v.end(), key));
-                                                            lis = "";
-                                                            for(auto s:str_v){
-                                                                lis += s;
-                                                                lis += ",";
-                                                            }
-                                                            database[userp] = lis;
-                                                        }
-                                                    }
-                                                    post_usr.erase(key);
 
-                                                  }
-                                                  else{
-                                                    std::string lis = database["all_users"];
-                                                    str_v.erase(find(str_v.begin(), str_v.end(), key));
-                                                    lis = "";
-                                                    for(auto s:str_v){
-                                                        lis += s;
-                                                        lis += ",";
-
-                                                    }
-                                                    database["all_users"] = lis;
-                                                  }
     
-                                                
-    
-                                                  return ::grpc::Status::OK;
+    if(this->database.find(key)!=this->database.end())
+        this->database.erase(key);
+    else{
+        // lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Server not responsible for the Key!");
+    }
+    if(key[0]=='p'){
+        if(post_usr[key]!=""){
+            int uid = extractID(post_usr[key]);
+            if(key_server[uid] == this->shardmanager_address){
+                std::string userp = post_usr[key] + "_posts";
+                std::string lis = database[userp];
+                std::vector<std::string> str_v = parse_value(lis, ",");
+                str_v.erase(find(str_v.begin(), str_v.end(), key));
+                lis = "";
+                for(auto s:str_v){
+                    lis += s;
+                    lis += ",";
+                }
+                database[userp] = lis;
+            }
+        }
+        post_usr.erase(key);
+    }
+    else{
+        std::string lis = database["all_users"];
+        std::vector<std::string> str_v = parse_value(lis, ",");
+        str_v.erase(find(str_v.begin(), str_v.end(), key));
+        lis = "";
+        for(auto s:str_v){
+            lis += s;
+            lis += ",";
+        }
+        database["all_users"] = lis;
+    }
+    // lock.unlock();
+    return ::grpc::Status::OK;
 }
 
 /**
@@ -301,40 +322,56 @@ void ShardkvServer::QueryShardmaster(Shardmaster::Stub* stub) {
     ::grpc::ClientContext cc;
     std::chrono::milliseconds timespan(100);
 
+    // First get the configuration from the Shardmaster using the Query function.
     auto status = stub->Query(&cc, query, &response);
 
-
     if(status.ok()){
-
-        for(int i = 0; i <response.config_size(); i++){
+        
+        
+        
+        for(int i = 0; i < response.config_size(); i++){
+            
+            // Get the server with the respective shards.
             std::string serv = response.config(i).server();
-
+            
             for(int j = 0; j < response.config(i).shards_size(); j++){
-
+                
                 int low = response.config(i).shards(j).lower();
                 int up = response.config(i).shards(j).upper();
-
+                
                 for(int k = low; k <= up; k++){
-                    if (key_server.find(k) != key_server.end()){
+                    
+                    // if the server is already there (Move)
+                    if(key_server.find(k) != key_server.end()){
+
+                        
                         if((serv != key_server[k]) && (key_server[k] == this->shardmanager_address)){
+                            
                             auto channel = grpc::CreateChannel(serv, grpc::InsecureChannelCredentials());
                             auto stub = Shardkv::NewStub(channel);
 
                             std::string usr = "user_" + std::to_string(k);
-
+                            
                             if(database.find(usr) != database.end()){
+
                                 int i = 0;
-                                while(i < MAX_TRIAL){
+
+                                while(i<MAX_TRIAL){
+                                    
                                     ::grpc::ClientContext cc;
                                     PutRequest req;
                                     Empty res;
-
+                                    
                                     req.set_key(usr);
                                     req.set_user(usr);
                                     req.set_data(database[usr]);
-
+                                    
                                     auto stat = stub->Put(&cc, req, &res);
+
                                     if(stat.ok()){
+                                        
+                                        // remove the user associated with the old key from the data
+                                        // and update the all_users entry
                                         this->database.erase(usr);
                                         
                                         std::string lis = database["all_users"];
@@ -348,16 +385,19 @@ void ShardkvServer::QueryShardmaster(Shardmaster::Stub* stub) {
                                             
                                             lis += s;
                                             lis += ",";
-                                    }
-                                    database["all_users"] = lis;
+                                        }
+                                        
+                                        database["all_users"] = lis;
                                         break;
+                                    }
                                     else{
-                                        std::this_thread::sleep_for(timespan);
                                         i++;
+                                        std::this_thread::sleep_for(timespan);
                                     }
                                 }
-                                if(i == MAX_TRIAL){
-                                    std::cout << "Failed to contact the right server" << std::endl;
+                                if (i == MAX_TRIAL){
+                                    
+                                    std::cout << "NOT POSSIBLE TO CONTACT THE SERVER" << std::endl;
                                     exit(1);
                                 }
                             }
@@ -365,74 +405,81 @@ void ShardkvServer::QueryShardmaster(Shardmaster::Stub* stub) {
                             std::string pst = "post_" + std::to_string(k);
 
                             if(database.find(pst) != database.end()){
+
                                 int i = 0;
-                                while(i < MAX_TRIAL){
+
+                                while(i<MAX_TRIAL){
+
                                     ::grpc::ClientContext cc;
                                     PutRequest req;
                                     Empty res;
-
+                                    
                                     req.set_key(pst);
-                                
                                     req.set_data(database[pst]);
-
+                                    
                                     auto stat = stub->Put(&cc, req, &res);
+
                                     if(stat.ok()){
+
                                         this->database.erase(pst);
                                         this->post_usr.erase(pst);
                                         break;
+
                                     }
                                     else{
-                                        std::this_thread::sleep_for(timespan);
+
                                         i++;
+                                        std::this_thread::sleep_for(timespan);
                                     }
                                 }
-
                                 if (i == MAX_TRIAL){
-                                    std::cout << "Failed to contact the right server" << std::endl;
+                                    
+                                    std::cout << "NOT POSSIBLE TO CONTACT THE SERVER" << std::endl;
                                     exit(1);
                                 }
                             }
                             std::string uip = usr + "_posts";
                             if(database.find(uip) != database.end()){
+
                                 int i = 0;
+
                                 while(i < MAX_TRIAL){
                                     ::grpc::ClientContext cc;
                                     PutRequest req;
                                     Empty res;
 
                                     req.set_key(uip);
-                                
                                     req.set_data(database[uip]);
-
                                     auto stat = stub->Put(&cc, req, &res);
                                     if(stat.ok()){
-                                        this->database.erase(uip);
-                                        break;
+                                        this->database.erase(uip);    
+                                        break;                                
                                     }
                                     else{
-                                        std::this_thread::sleep_for(timespan);
                                         i++;
+                                        std::this_thread::sleep_for(timespan);
                                     }
                                 }
-
                                 if (i == MAX_TRIAL){
-                                    std::cout << "Failed to contact the right server" << std::endl;
+                                    
+                                    std::cout << "NOT POSSIBLE TO CONTACT THE SERVER" << std::endl;
                                     exit(1);
                                 }
                             }
                         }
                     }
 
+                    // Associate with the k-th key the respective server.
                     this->key_server[k] = serv;
                 }
             }
         }
+        
     }
     else{
+
         exit(1);
     }
-
-}
 }
 
 
@@ -450,15 +497,16 @@ void ShardkvServer::QueryShardmaster(Shardmaster::Stub* stub) {
  * method!
  * */
 void ShardkvServer::PingShardmanager(Shardkv::Stub* stub) {
+    
     std::unique_lock<std::mutex> lock(this->skv_mtx);
 
     PingRequest request;
     PingResponse response;
-    ::grpc::CLientContext cc;
+    ::grpc::ClientContext cc;
 
     request.set_server(this->address);
     request.set_viewnumber(this->viewnumber);
-    // Send ping request and get reply from shardmaster
+
     auto stat = stub->Ping(&cc, request, &response);
 
     this->viewnumber = response.id();
@@ -481,26 +529,31 @@ void ShardkvServer::PingShardmanager(Shardkv::Stub* stub) {
 
                 auto stat = stub->Dump(&cc, request, &response);
                 if (stat.ok()){
-
-                    for (const auto& kv : response.database() )
+                    
+                    for( const auto& kv : response.database() )
                         this->database.insert({kv.first, kv.second});
 
-                    std::cout << "transfert All Ok" << std::endl;
-                    }else{
-                        std::cout << "Transfert NOT ok" << std::endl;
-
+                    std::cout << "Transfert All OK" << std::endl;
+                } else{
+                    std::cout << "Transfert NOT OK" << std::endl;
                 }
+            }
+
+        }
+    }
+    else{
+        lock.unlock();
+        
+        return;
     }
 
-    }
-}
-else{
+    
+
     lock.unlock();
-    return;
+
+    return; 
 }
-lock.unlock();
-return;
-}
+
 
 /**
  * PART 3 ONLY

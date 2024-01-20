@@ -1,8 +1,8 @@
 #include <grpcpp/grpcpp.h>
 
 #include "shardkv_manager.h"
-
 #include "../build/shardkv.grpc.pb.h"
+
 /**
  * This method is analogous to a hashmap lookup. A key is supplied in the
  * request and if its value can be found, we should either set the appropriate
@@ -19,24 +19,26 @@
 ::grpc::Status ShardkvManager::Get(::grpc::ServerContext* context,
                                   const ::GetRequest* request,
                                   ::GetResponse* response) {
-                                    std::unique_lock<std::mutex> lock(this->skv_mtx);;
+ 
 
-                                    auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
-                                    auto kvStub = ::Shardkv::NewStub(channel);
-                                    ::grpc::ClientContext cc;
+    std::unique_lock<std::mutex> lock(this->skv_mtx);;
 
-                                    auto status = kvStub->get(&cc, *request, response);
+    // create a connection with the server
+    auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
+    auto kvStub = Shardkv::NewStub(channel);
+    ::grpc::ClientContext cc;
 
-                                    if (status.ok()){
-                                        std::cout <<"Shardmanager got the response from the server" << std::endl;
+    auto status = kvStub->Get(&cc, *request, response);
+    
+    if (status.ok()){
+        std::cout << "Shardmanager got the Get response from the server" << std::endl;
+    }else{
+        lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+    }
 
-                                    }else{
-                                        lock.unlock();
-                                        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This Shardmanager failed");
-                                    }
-                                    lock.unlock();
-                                    return ::grpc::Status::Ok;
-
+    lock.unlock();
+    return ::grpc::Status::OK;
 }
 
 /**
@@ -56,20 +58,45 @@
 ::grpc::Status ShardkvManager::Put(::grpc::ServerContext* context,
                                   const ::PutRequest* request,
                                   Empty* response) {
-                                    ::grpc::ClientContext cc;
 
-                                    auto status = kvStub->Put(&cc, *request, response);
+    std::unique_lock<std::mutex> lock(this->skv_mtx);;
 
-                                    if (status.ok()){
-                                        std::cout << "Shardmanager got the Put response from the primary server" << std::endl;
-                                    }else{
-                                        lock.unlock();
-                                        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
-                                    }
+    // create a connection with the primary server
+    auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
+    auto kvStub = Shardkv::NewStub(channel);
+    ::grpc::ClientContext cc;
 
-                                    lock.unlock();
-                                    return ::grpc::Status::OK;
-    
+    auto status = kvStub->Put(&cc, *request, response);
+
+    if (status.ok()){
+        std::cout << "Shardmanager got the Put response from the primary server" << std::endl;
+    }else{
+        lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+    }
+
+    // create a connection with the backup server
+    /*
+    if (!this->shardKV_backup_address.empty()){
+        auto channel2 = ::grpc::CreateChannel(this->shardKV_backup_address, ::grpc::InsecureChannelCredentials());
+        auto kvStub2 = Shardkv::NewStub(channel2);
+        ::grpc::ClientContext cc2;
+        
+        auto status2 = kvStub2->Put(&cc2, *request, response);
+
+        if (status2.ok()){
+            std::cout << "Shardmanager got the Put response from the backup server" << std::endl;
+        }else{
+            lock.unlock();
+            return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+        }
+        
+
+    }
+    */
+
+    lock.unlock();
+    return ::grpc::Status::OK;
 }
 
 /**
@@ -88,24 +115,50 @@
 ::grpc::Status ShardkvManager::Append(::grpc::ServerContext* context,
                                      const ::AppendRequest* request,
                                      Empty* response) {
-                                        std::unique_lock<std::mutex> lock(this->skv_mtx);
-                                        auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChaneelCredentials());
-                                        auto kvStub = Shardkv::NewStub(channel);
-                                        ::grpc::ClientContext cc;
 
-                                        auto status = kvStub->Append(&cc, *request, response);
+    std::unique_lock<std::mutex> lock(this->skv_mtx);
 
-                                        if (stauts.ok()){
-                                            std::cout << "Shardmanager got the Append response from the primary server" << std::endl;
-                                        }else{
-                                            lock.unlock();
-                                            return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "this shardmanager failed");
-                                        }
+    // create a connection with the server
+    auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
+    auto kvStub = Shardkv::NewStub(channel);
+    ::grpc::ClientContext cc;
 
-                                        lock.unlock();
-                                        return ::grpc::Status::OK;
+    auto status = kvStub->Append(&cc, *request, response);
+    
+    if (status.ok()){
+        std::cout << "Shardmanager got the Append response from the server" << std::endl;
+    }else{
+        lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+    }
 
-                                     }
+    /*
+
+    if(!this->shardKV_backup_address.empty()){
+
+        auto channel2 = ::grpc::CreateChannel(this->shardKV_backup_address, ::grpc::InsecureChannelCredentials());
+        auto kvStub2 = Shardkv::NewStub(channel2);
+        ::grpc::ClientContext cc2;
+        
+        auto status2 = kvStub2->Append(&cc2, *request, response);
+
+        if (status2.ok()){
+        std::cout << "Shardmanager got the Append response from the backup server" << std::endl;
+    }else{
+        lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+    }
+
+     
+
+    }
+    */
+
+
+    lock.unlock();
+    return ::grpc::Status::OK;
+}
+
 /**
  * Deletes the key-value pair associated with this key from the server.
  * If this server does not contain the requested key, do nothing and return
@@ -121,45 +174,47 @@
 ::grpc::Status ShardkvManager::Delete(::grpc::ServerContext* context,
                                            const ::DeleteRequest* request,
                                            Empty* response) {
-                                                  std::unique_lock<std::mutex> lock(this->skv_mtx);
-                                                  auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
-                                                  auto kvStub = Shardkv::NewStub(channel);
-                                                  ::grpc::ClientContext cc;
-    
-                                                  auto status = kvStub->Delete(&cc, *request, response);
-    
-                                                  if (status.ok()){
-                                                    std::cout << "Shardmanager got the Delete response from the primary server" << std::endl;
-                                                  }else{
-                                                    lock.unlock();
-                                                    return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
-                                                  }
 
-                                                  if(!this->shardKV_backup_address.empty()){
-                                                    auto channel = ::grpc::CreateChannel(this->shardKV_backup_address, ::grpc::InsecureChannelCredentials());
-                                                    auto kvStub = Shardkv::NewStub(channel);
-                                                    ::grpc::ClientContext cc2;
-    
-                                                    auto status = kvStub->Delete(&cc, *request, response);
-    
-                                                    if (status.ok()){
-                                                        std::cout << "Shardmanager got the Delete response from the backup server" << std::endl;
-                                                    }else{
-                                                        lock.unlock();
-                                                        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
-                                                    }
-                                                  }
+    std::unique_lock<std::mutex> lock(this->skv_mtx);
 
-                                                
+    // create a connection with the server
+    auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
+    auto kvStub = Shardkv::NewStub(channel);
+    ::grpc::ClientContext cc;
+
+    auto status = kvStub->Delete(&cc, *request, response);
+
     
-                                                  lock.unlock();
-                                                  return ::grpc::Status::OK;
-                                             
+    if (status.ok()){
+        std::cout << "Shardmanager got the Delete response from the server" << std::endl;
+    }else{
+        lock.unlock();
+        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+    }
+
+     if(!this->shardKV_backup_address.empty()){
+
+        auto channel2 = ::grpc::CreateChannel(this->shardKV_backup_address, ::grpc::InsecureChannelCredentials());
+        auto kvStub2 = Shardkv::NewStub(channel2);
+        ::grpc::ClientContext cc2;
+        
+        auto status2 = kvStub2->Delete(&cc2, *request, response);
+
+        if (status2.ok()){
+            std::cout << "Shardmanager got the Append response from the backup server" << std::endl;
+        }else{
+            lock.unlock();
+            return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+    }
+     }
+
+    lock.unlock();
+    return ::grpc::Status::OK;
 }
 
 /**
  * In part 2, this function get address of the server sending the Ping request, who became the primary server to which the
- * shardmanager will forward Get, Put, Append and Delete requests. It answer with the name of the shardmaster containeing
+ * shardmanager will forward Get, Put, Append and Delete requests. It answer with the name of the shardmaster containing
  * the information about the distribution.
  *
  * @param context - you can ignore this
@@ -171,11 +226,15 @@
  */
 ::grpc::Status ShardkvManager::Ping(::grpc::ServerContext* context, const PingRequest* request,
                                        ::PingResponse* response){
+    
     std::unique_lock<std::mutex> lock(this->skv_mtx);
     std::string skv_address = request->server();
     std::vector<std::string> new_skv;
 
+    // check the function context->set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10))
+    // should I create a function that creates a thread for the primary and the backup server? But it is not here to be implemented.
     if(this->shardKV_address.empty()){
+
         this->shardKV_address = skv_address;
         this->last_ack_view = current_view;
         this->current_view++;
@@ -186,40 +245,45 @@
         response->set_primary(skv_address);
         response->set_backup("");
 
-    }else if ((this->shardKV_backup_address.empty()) && (skv_address != this->shardKV_address)) {
+    } else if ((this->shardKV_backup_address.empty()) && (skv_address != this->shardKV_address)){ 
+
         this->shardKV_backup_address = skv_address;
-        
         this->current_view++;
         new_skv.push_back(this->shardKV_address);
         new_skv.push_back(skv_address);
-        
         this->views[this->current_view] = new_skv;
-        response->set_primary(this->shardKV_address);
-        response->set_backup(this->shardKV_backup_address);
         response->set_id(this->last_ack_view);
+        response->set_primary(this->shardKV_address);
+        response->set_backup(skv_address);
+
     } else if (this->shardKV_address == skv_address){
 
         this->last_ack_view = request->viewnumber();
         response->set_primary(this->shardKV_address);
         response->set_backup(this->shardKV_backup_address);
         response->set_id(this->current_view);
+
+
     } else if (this->shardKV_backup_address == skv_address){
-        std::string primary = this->viewa[this->last_ack_view].at(0);
-        std::string backup = this->viewa[this->last_ack_view].at(1);
+
+        std::string primary = this->views[this->last_ack_view].at(0);
+        std::string backup = this->views[this->last_ack_view].at(1);
 
         response->set_primary(primary);
         response->set_backup(backup);
         response->set_id(this->last_ack_view);
-    }else{
-        return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed, too many servers to deal with");
+    }else {
+        // this->skv_mtx.unlock();
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Too Many Servers to deal with");
     }
+
+    // std::cout << "PRIMARY SERVER: " << this->shardKV_address << " BACKUP SERVER: " << this->shardKV_backup_address << std::endl << "VIEW NUMBER " << this->current_view << std::endl;
     PingInterval p;
     p.Push(std::chrono::high_resolution_clock::now());
     this->pingIntervals[skv_address] = p;
-
-    response->set_shardmaster(this->sm_address);
     
+    response->set_shardmaster(this->sm_address);
+
     lock.unlock();
     return ::grpc::Status(::grpc::StatusCode::OK, "Success");
 }
-
