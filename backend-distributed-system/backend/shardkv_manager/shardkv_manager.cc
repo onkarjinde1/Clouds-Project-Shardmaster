@@ -19,9 +19,7 @@
 ::grpc::Status ShardkvManager::Get(::grpc::ServerContext* context,
                                   const ::GetRequest* request,
                                   ::GetResponse* response) {
- 
-
-    std::unique_lock<std::mutex> lock(this->skv_mtx);;
+    std::unique_lock<std::mutex> lock(this->skv_mtx);
 
     // create a connection with the server
     auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
@@ -29,17 +27,17 @@
     ::grpc::ClientContext cc;
 
     auto status = kvStub->Get(&cc, *request, response);
-    
-    if (status.ok()){
+
+    if (status.ok()) {
         std::cout << "Shardmanager got the Get response from the server" << std::endl;
-    }else{
-        lock.unlock();
+    } else {
         return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
     }
 
-    lock.unlock();
+    // No need to manually unlock here, the lock_guard will handle it
     return ::grpc::Status::OK;
 }
+
 
 /**
  * Insert the given key-value mapping into our store such that future gets will
@@ -58,8 +56,7 @@
 ::grpc::Status ShardkvManager::Put(::grpc::ServerContext* context,
                                   const ::PutRequest* request,
                                   Empty* response) {
-
-    std::unique_lock<std::mutex> lock(this->skv_mtx);;
+    std::unique_lock<std::mutex> lock(this->skv_mtx);
 
     // create a connection with the primary server
     auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
@@ -68,34 +65,29 @@
 
     auto status = kvStub->Put(&cc, *request, response);
 
-    if (status.ok()){
+    if (status.ok()) {
         std::cout << "Shardmanager got the Put response from the primary server" << std::endl;
-    }else{
-        lock.unlock();
+    } else {
         return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
     }
 
     // create a connection with the backup server
-    /*
-    if (!this->shardKV_backup_address.empty()){
+    if (!this->shardKV_backup_address.empty()) {
         auto channel2 = ::grpc::CreateChannel(this->shardKV_backup_address, ::grpc::InsecureChannelCredentials());
         auto kvStub2 = Shardkv::NewStub(channel2);
         ::grpc::ClientContext cc2;
-        
+
         auto status2 = kvStub2->Put(&cc2, *request, response);
 
-        if (status2.ok()){
+        if (status2.ok()) {
             std::cout << "Shardmanager got the Put response from the backup server" << std::endl;
-        }else{
+        } else {
             lock.unlock();
             return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
         }
-        
-
     }
-    */
 
-    lock.unlock();
+    // No need to manually unlock here, the lock_guard will handle it
     return ::grpc::Status::OK;
 }
 
@@ -155,7 +147,7 @@
     */
 
 
-    lock.unlock();
+    
     return ::grpc::Status::OK;
 }
 
@@ -172,45 +164,44 @@
  * here>")
  */
 ::grpc::Status ShardkvManager::Delete(::grpc::ServerContext* context,
-                                           const ::DeleteRequest* request,
-                                           Empty* response) {
-
+                                      const ::DeleteRequest* request,
+                                      Empty* response) {
     std::unique_lock<std::mutex> lock(this->skv_mtx);
 
-    // create a connection with the server
-    auto channel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
-    auto kvStub = Shardkv::NewStub(channel);
-    ::grpc::ClientContext cc;
+    // Create a connection with the primary server and perform delete
+    auto primaryChannel = ::grpc::CreateChannel(this->shardKV_address, ::grpc::InsecureChannelCredentials());
+    auto primaryStub = Shardkv::NewStub(primaryChannel);
+    ::grpc::ClientContext primaryContext;
 
-    auto status = kvStub->Delete(&cc, *request, response);
+    auto primaryStatus = primaryStub->Delete(&primaryContext, *request, response);
 
-    
-    if (status.ok()){
-        std::cout << "Shardmanager got the Delete response from the server" << std::endl;
-    }else{
+    if (primaryStatus.ok()) {
+        std::cout << "Shardmanager got the Delete response from the primary server" << std::endl;
+    } else {
         lock.unlock();
         return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
     }
 
-     if(!this->shardKV_backup_address.empty()){
+    // If a backup server exists, create a connection and perform delete
+    if (!this->shardKV_backup_address.empty()) {
+        auto backupChannel = ::grpc::CreateChannel(this->shardKV_backup_address, ::grpc::InsecureChannelCredentials());
+        auto backupStub = Shardkv::NewStub(backupChannel);
+        ::grpc::ClientContext backupContext;
 
-        auto channel2 = ::grpc::CreateChannel(this->shardKV_backup_address, ::grpc::InsecureChannelCredentials());
-        auto kvStub2 = Shardkv::NewStub(channel2);
-        ::grpc::ClientContext cc2;
-        
-        auto status2 = kvStub2->Delete(&cc2, *request, response);
+        auto backupStatus = backupStub->Delete(&backupContext, *request, response);
 
-        if (status2.ok()){
-            std::cout << "Shardmanager got the Append response from the backup server" << std::endl;
-        }else{
+        if (backupStatus.ok()) {
+            std::cout << "Shardmanager got the Delete response from the backup server" << std::endl;
+        } else {
             lock.unlock();
             return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "This shardmanager failed");
+        }
     }
-     }
 
-    lock.unlock();
+    // No need to manually unlock here, the lock_guard will handle it
     return ::grpc::Status::OK;
 }
+
 
 /**
  * In part 2, this function get address of the server sending the Ping request, who became the primary server to which the
@@ -225,19 +216,28 @@
  * here>")
  */
 ::grpc::Status ShardkvManager::Ping(::grpc::ServerContext* context, const PingRequest* request,
-                                       ::PingResponse* response){
-    
+                                     ::PingResponse* response) {
     std::unique_lock<std::mutex> lock(this->skv_mtx);
+
     std::string skv_address = request->server();
     std::vector<std::string> new_skv;
 
-    // check the function context->set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10))
-    // should I create a function that creates a thread for the primary and the backup server? But it is not here to be implemented.
-    if(this->shardKV_address.empty()){
+    if (this->shardKV_address.empty() || (this->shardKV_backup_address.empty() && skv_address != this->shardKV_address)) {
+        if (this->shardKV_address.empty()) {
+            this->shardKV_address = skv_address;
+            this->last_ack_view = current_view;
+            this->current_view++;
+        } else {
+            this->shardKV_backup_address = skv_address;
+            this->current_view++;
+            new_skv.push_back(this->shardKV_address);
+            new_skv.push_back(skv_address);
+            this->views[this->current_view] = new_skv;
+            response->set_id(this->last_ack_view);
+            response->set_primary(this->shardKV_address);
+            response->set_backup(skv_address);
+        }
 
-        this->shardKV_address = skv_address;
-        this->last_ack_view = current_view;
-        this->current_view++;
         new_skv.push_back(this->shardKV_address);
         new_skv.push_back("");
         response->set_id(this->current_view);
@@ -245,39 +245,18 @@
         response->set_primary(skv_address);
         response->set_backup("");
 
-    } else if ((this->shardKV_backup_address.empty()) && (skv_address != this->shardKV_address)){ 
-
-        this->shardKV_backup_address = skv_address;
-        this->current_view++;
-        new_skv.push_back(this->shardKV_address);
-        new_skv.push_back(skv_address);
-        this->views[this->current_view] = new_skv;
-        response->set_id(this->last_ack_view);
-        response->set_primary(this->shardKV_address);
-        response->set_backup(skv_address);
-
-    } else if (this->shardKV_address == skv_address){
-
-        this->last_ack_view = request->viewnumber();
+    } else if (this->shardKV_address == skv_address || this->shardKV_backup_address == skv_address) {
+        if (this->shardKV_address == skv_address) {
+            this->last_ack_view = request->viewnumber();
+        }
         response->set_primary(this->shardKV_address);
         response->set_backup(this->shardKV_backup_address);
         response->set_id(this->current_view);
-
-
-    } else if (this->shardKV_backup_address == skv_address){
-
-        std::string primary = this->views[this->last_ack_view].at(0);
-        std::string backup = this->views[this->last_ack_view].at(1);
-
-        response->set_primary(primary);
-        response->set_backup(backup);
-        response->set_id(this->last_ack_view);
-    }else {
-        // this->skv_mtx.unlock();
+    } else {
+        lock.unlock();
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Too Many Servers to deal with");
     }
 
-    // std::cout << "PRIMARY SERVER: " << this->shardKV_address << " BACKUP SERVER: " << this->shardKV_backup_address << std::endl << "VIEW NUMBER " << this->current_view << std::endl;
     PingInterval p;
     p.Push(std::chrono::high_resolution_clock::now());
     this->pingIntervals[skv_address] = p;

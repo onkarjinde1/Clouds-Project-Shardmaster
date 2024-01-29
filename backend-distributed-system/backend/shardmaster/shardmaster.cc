@@ -20,57 +20,45 @@
 ::grpc::Status StaticShardmaster::Join(::grpc::ServerContext* context,
                                        const ::JoinRequest* request,
                                        Empty* response) {
-    
-    
     std::unique_lock<std::mutex> lock(this->ssm_mtx);
 
-   
-    if(this->ssm.find(request->server()) != ssm.end()){
-        lock.unlock();
+    if (this->ssm.find(request->server()) != ssm.end()) {
         return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Server already exists");
     }
 
     int num_servers = this->ssm.size();
     int num_keys = MAX_KEY - MIN_KEY + 1;
-    
+
     num_servers++;
-    
-   
+
     this->ser.push_back(request->server());
-    
+
     std::vector<shard_t> new_vsh;
     ssm[request->server()] = new_vsh;
 
-    int per_sh = num_keys/num_servers;
+    int per_sh = num_keys / num_servers;
     int extr = num_keys % num_servers;
     int lower = MIN_KEY;
-    int upper = per_sh-1;
+    int upper = per_sh - 1;
 
-    
-
-    
-    if(per_sh){
-
-        for(auto v:(this->ser)){
-            
-            
-            if(extr){
+    if (per_sh) {
+        for (auto v : this->ser) {
+            if (extr) {
                 upper++;
                 extr--;
             }
-        
+
             shard_t new_sh;
             new_sh.lower = lower;
             new_sh.upper = upper;
             this->ssm[v].clear();
             this->ssm[v].push_back(new_sh);
-            lower = upper+1;
-            upper = lower+per_sh-1;
+            lower = upper + 1;
+            upper = lower + per_sh - 1;
         }
     }
 
-    lock.unlock();
-    
+    // No need to manually unlock here, the lock_guard will handle it
     return ::grpc::Status::OK;
 }
 
@@ -93,51 +81,47 @@
 ::grpc::Status StaticShardmaster::Leave(::grpc::ServerContext* context,
                                         const ::LeaveRequest* request,
                                         Empty* response) {
+    std::unique_lock<std::mutex> lock(this->ssm_mtx);
 
-    
-
-    std::unique_lock<std::mutex> lock(this->ssm_mtx);;
     int num_keys = MAX_KEY - MIN_KEY + 1;
 
-    
-    for(int i = 0; i < request->servers_size(); i++){
-        if(this->ssm.find(request->servers(i)) == this->ssm.end()){
-            lock.unlock();
-            return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "The given server does not exists!");
+    for (int i = 0; i < request->servers_size(); i++) {
+        auto serverIt = this->ssm.find(request->servers(i));
+        if (serverIt == this->ssm.end()) {
+            return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "The given server does not exist!");
         }
 
-        this->ssm.erase(request->servers(i));
-        this->ser.erase(find(this->ser.begin(), this->ser.end(), request->servers(i)));
+        this->ssm.erase(serverIt);
+        this->ser.erase(std::remove(this->ser.begin(), this->ser.end(), request->servers(i)), this->ser.end());
     }
 
-    
     int num_servers = this->ssm.size();
     int per_sh = num_keys / num_servers;
     int extr = num_keys % num_servers;
     int lower = MIN_KEY;
-    int upper = per_sh-1;
+    int upper = per_sh - 1;
 
-    for(auto v : (this->ser)){
-        
-        if(extr){
+    for (auto v : this->ser) {
+        if (extr) {
             upper++;
             extr--;
-        }
-        else if(!per_sh)
+        } else if (!per_sh) {
             break;
-        
+        }
+
         shard_t new_sh;
         new_sh.lower = lower;
         new_sh.upper = upper;
         this->ssm[v].clear();
         this->ssm[v].push_back(new_sh);
-        lower = upper+1;
-        upper = lower+per_sh-1;
+        lower = upper + 1;
+        upper = lower + per_sh - 1;
     }
-    
-    lock.unlock();
+
+    // No need to manually unlock here, the lock_guard will handle it
     return ::grpc::Status::OK;
 }
+
 
 /**
  * Move the specified shard to the target server (passed in MoveRequest) in the
@@ -157,58 +141,55 @@
 ::grpc::Status StaticShardmaster::Move(::grpc::ServerContext* context,
                                        const ::MoveRequest* request,
                                        Empty* response) {
-
     std::unique_lock<std::mutex> lock(this->ssm_mtx);
-    if(this->ssm.find(request->server()) == this->ssm.end()){
-        lock.unlock();
+
+    if (this->ssm.find(request->server()) == this->ssm.end()) {
         return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT, "Server doesn't exist. Move Error!");
     }
 
     shard_t sh;
     shard_t new_shard;
     shard_t v;
-    
+
     sh.lower = request->shard().lower();
     sh.upper = request->shard().upper();
-    
-    for(auto m:this->ssm){
-        
+
+    for (auto& m : this->ssm) {
         std::vector<shard_t> new_shv;
-        
-        for(auto v1 : m.second){
-            
+
+        for (auto& v1 : m.second) {
             auto ov_st = get_overlap(v1, sh);
-            
+
             v.lower = v1.lower;
             v.upper = v1.upper;
-            
-            if(ov_st == OverlapStatus::OVERLAP_START){
+
+            if (ov_st == OverlapStatus::OVERLAP_START) {
                 v.lower = sh.upper + 1;
                 new_shv.push_back(v);
-            }
-            else if(ov_st == OverlapStatus::OVERLAP_END){
+            } else if (ov_st == OverlapStatus::OVERLAP_END) {
                 v.upper = sh.lower - 1;
                 new_shv.push_back(v);
-            }
-            else if(ov_st == OverlapStatus::COMPLETELY_CONTAINS){
+            } else if (ov_st == OverlapStatus::COMPLETELY_CONTAINS) {
                 new_shard.lower = sh.upper + 1;
                 new_shard.upper = v.upper;
                 v.upper = sh.lower - 1;
                 new_shv.push_back(v);
                 new_shv.push_back(new_shard);
-            }
-            else if (ov_st == OverlapStatus::NO_OVERLAP){
+            } else if (ov_st == OverlapStatus::NO_OVERLAP) {
                 new_shv.push_back(v);
             }
         }
 
-        this->ssm[m.first] = new_shv;
+        m.second = new_shv;
     }
+
     this->ssm[request->server()].push_back(sh);
     sortAscendingInterval(this->ssm[request->server()]);
-    lock.unlock();
+
+    // No need to manually unlock here, the lock_guard will handle it
     return ::grpc::Status::OK;
 }
+
 
 /**
  * When this function is called, you should store the current servers and their
@@ -227,23 +208,23 @@
 ::grpc::Status StaticShardmaster::Query(::grpc::ServerContext* context,
                                         const StaticShardmaster::Empty* request,
                                         ::QueryResponse* response) {
-    // remember when you generate the proto file, it generates automatically 
-    // some code like set_<> and add_<> (for the repeated field)
     std::unique_lock<std::mutex> lock(this->ssm_mtx);
 
     // QueryResponse contains multiple ConfigEntry. Each ConfigEntry contains repeated Shards and a server.
     // Each shard contains a lower and an upper bound.
 
-    // For each server, It gonna set the configuration (server name and shards). 
-    for(auto v : (this->ser)){
+    // For each server, It gonna set the configuration (server name and shards).
+    for (const auto& v : this->ser) {
         auto conf_entry = response->add_config();
         conf_entry->set_server(v);
-        for(auto sh : this->ssm[v]){
+
+        for (const auto& sh : this->ssm[v]) {
             auto sh_entry = conf_entry->add_shards();
             sh_entry->set_lower(sh.lower);
             sh_entry->set_upper(sh.upper);
         }
     }
-    lock.unlock();
+
+    // No need to manually unlock here, the lock_guard will handle it
     return ::grpc::Status::OK;
 }
